@@ -123,43 +123,58 @@ def test_gemini_incomplete_response_retries_once_with_bigger_budget():
     providers."""
     import llm_providers
 
-    class FakeInteraction:
-        def __init__(self, output_text, status):
-            self.output_text = output_text
-            self.status = status
+    class FakeResponse:
+        def __init__(self, text):
+            self.text = text
 
     calls = []
 
-    class FakeInteractionsAPI:
-        def create(self, model, input, system_instruction, generation_config):
-            calls.append(generation_config["max_output_tokens"])
-            if generation_config["max_output_tokens"] < 1000:
-                return FakeInteraction(output_text=None, status="incomplete")
-            return FakeInteraction(output_text="the real answer", status="completed")
-
     class FakeModels:
+        def generate_content(self, model, contents, config=None):
+            max_tokens = getattr(config, "max_output_tokens", 1024) if config else 1024
+            calls.append(max_tokens)
+            if max_tokens < 1000:
+                raise RuntimeError("incomplete token budget")
+            return FakeResponse("the real answer")
+
         def embed_content(self, model, contents):
             raise NotImplementedError
 
     class FakeClient:
         def __init__(self, api_key):
-            self.interactions = FakeInteractionsAPI()
             self.models = FakeModels()
+
+    class FakeTypes:
+        @staticmethod
+        def GenerateContentConfig(**kwargs):
+            class Config:
+                pass
+            c = Config()
+            for k, v in kwargs.items():
+                setattr(c, k, v)
+            return c
+
+        @staticmethod
+        def ThinkingConfig(**kwargs):
+            return kwargs
 
     class FakeGenaiModule:
         Client = FakeClient
+        types = FakeTypes
 
     import sys
     sys.modules["google"] = type(sys)("google")
     sys.modules["google.genai"] = FakeGenaiModule
+    sys.modules["google.genai.types"] = FakeTypes
     sys.modules["google"].genai = FakeGenaiModule
 
-    provider = llm_providers.GeminiProvider("fake-key", "gemini-3.6-flash")
+    provider = llm_providers.GeminiProvider("fake-key", "gemini-3-flash-preview")
     result = provider.generate("hello", max_tokens=50)
 
     assert result == "the real answer"
     assert calls == [50, 4096]  # exactly one retry, with a bigger budget
 
+    del sys.modules["google.genai.types"]
     del sys.modules["google.genai"]
     del sys.modules["google"]
 
@@ -169,34 +184,42 @@ def test_gemini_gives_up_after_one_retry_if_still_incomplete():
     (not retry again) — the self-heal is bounded to a single attempt."""
     import llm_providers
 
-    class FakeInteraction:
-        output_text = None
-        status = "incomplete"
-
     call_count = {"n": 0}
 
-    class FakeInteractionsAPI:
-        def create(self, **kwargs):
+    class FakeModels:
+        def generate_content(self, **kwargs):
             call_count["n"] += 1
-            return FakeInteraction()
+            raise RuntimeError("incomplete token budget")
 
     class FakeClient:
         def __init__(self, api_key):
-            self.interactions = FakeInteractionsAPI()
+            self.models = FakeModels()
+
+    class FakeTypes:
+        @staticmethod
+        def GenerateContentConfig(**kwargs):
+            return None
+
+        @staticmethod
+        def ThinkingConfig(**kwargs):
+            return kwargs
 
     class FakeGenaiModule:
         Client = FakeClient
+        types = FakeTypes
 
     import sys
     sys.modules["google"] = type(sys)("google")
     sys.modules["google.genai"] = FakeGenaiModule
+    sys.modules["google.genai.types"] = FakeTypes
     sys.modules["google"].genai = FakeGenaiModule
 
-    provider = llm_providers.GeminiProvider("fake-key", "gemini-3.6-flash")
+    provider = llm_providers.GeminiProvider("fake-key", "gemini-3-flash-preview")
     with pytest.raises(ProviderError):
         provider.generate("hello", max_tokens=50)
     assert call_count["n"] == 2  # original attempt + exactly one retry
 
+    del sys.modules["google.genai.types"]
     del sys.modules["google.genai"]
     del sys.modules["google"]
 

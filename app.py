@@ -44,7 +44,7 @@ with st.sidebar:
 
     st.divider()
     st.header("Model")
-    gemini_model = st.text_input("Gemini model", value="gemini-3.6-flash")
+    gemini_model = st.text_input("Gemini model", value="gemini-3-flash-preview")
     gemini_thinking = st.selectbox(
         "Gemini thinking level", ["low", "medium", "high"], index=0,
         help="Gemini 3.x models reason internally before answering, and that reasoning is billed against "

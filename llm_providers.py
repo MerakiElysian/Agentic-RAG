@@ -46,26 +46,15 @@ def _diagnose(exc: Exception) -> str:
 class GeminiProvider:
     name = "gemini"
 
-    def __init__(self, api_key: str, model: str = "gemini-3.6-flash", thinking_level: str = "low"):
+    def __init__(self, api_key: str, model: str = "gemini-3-flash-preview", thinking_level: str = "low"):
         self.api_key = api_key
         self.model = model
-        # Gemini 3.x models "think" before answering by default, and those
-        # thought tokens are billed against max_output_tokens — so short
-        # budgets can be fully consumed by invisible reasoning, producing an
-        # empty response with status "incomplete". "low" keeps reasoning
-        # minimal, which fits this app's short classification-style prompts.
         self.thinking_level = thinking_level
 
     def generate(self, prompt: str, system: str | None = None, max_tokens: int = 1024) -> str:
         try:
             return self._generate_once(prompt, system, max_tokens)
         except ProviderError as first_err:
-            # One bounded, same-provider self-heal: if the call came back
-            # incomplete (all output tokens spent on thinking, none on
-            # visible text), retry ONCE with a much larger budget. This is
-            # not the primary/secondary fallback loop — it never recurses
-            # and never crosses providers — just a single safety retry for
-            # this specific, documented failure mode.
             if "incomplete" in str(first_err).lower() and max_tokens < 4096:
                 try:
                     return self._generate_once(prompt, system, max_tokens=4096)
@@ -76,24 +65,24 @@ class GeminiProvider:
     def _generate_once(self, prompt: str, system: str | None, max_tokens: int) -> str:
         try:
             from google import genai
+            from google.genai import types
+
             client = genai.Client(api_key=self.api_key)
-            interaction = client.interactions.create(
-                model=self.model,
-                input=prompt,
+            thinking_budget = 0 if self.thinking_level == "low" else (1024 if self.thinking_level == "medium" else 4096)
+            config = types.GenerateContentConfig(
                 system_instruction=system,
-                generation_config={
-                    "max_output_tokens": max_tokens,
-                    "thinking_level": self.thinking_level,
-                },
+                max_output_tokens=max_tokens,
+                thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
             )
-            text = getattr(interaction, "output_text", None)
+            response = client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=config,
+            )
+            text = getattr(response, "text", None)
             if text:
-                return text
-            status = getattr(interaction, "status", "unknown")
-            raise RuntimeError(
-                f"Gemini interaction produced no text (status: {status}). "
-                "The token budget was likely spent entirely on internal reasoning."
-            )
+                return text.strip()
+            raise RuntimeError("Gemini returned an empty response.")
         except Exception as e:
             raise ProviderError(self.name, e) from e
 
@@ -111,13 +100,7 @@ class GeminiProvider:
 
     def test_connection(self) -> str:
         """Minimal live call used by the sidebar 'Test connection' button."""
-        text = self.generate("Reply with exactly: ok", max_tokens=20)
-        return text.strip()
-
-
-    def test_connection(self) -> str:
-        """Minimal live call used by the sidebar 'Test connection' button."""
-        text = self.generate("Reply with exactly: ok", max_tokens=20)
+        text = self.generate("Reply with exactly: ok", max_tokens=100)
         return text.strip()
 
 
