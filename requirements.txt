@@ -1,5 +1,5 @@
 streamlit==1.48.1
-google-genai==1.55.0
+google-genai==2.21.0 
 tavily-python==0.7.12
 pypdf==6.0.0
 python-docx==1.2.0
