@@ -22,8 +22,12 @@ from llm_providers import GeminiProvider, LLMRouter
 from retrieval import VectorStore, extract_text
 from agent import run_agentic_rag
 
+
 st.set_page_config(page_title="Agentic RAG", page_icon=None, layout="wide")
 
+for key in ("GEMINI_API_KEY", "XAI_API_KEY", "TAVILY_API_KEY"):
+    if key in st.secrets:
+        os.environ.setdefault(key, st.secrets[key])
 # Session state
 if "vector_store" not in st.session_state:
     st.session_state.vector_store = VectorStore()
